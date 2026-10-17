@@ -13,11 +13,11 @@ from pathlib import Path
 from statistics import mean
 
 if __package__ in {None, ""}:
-    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from laptop_common import (  # noqa: E402
-    MODEL_DIR, PROJECT_ROOT, RUN_DIR, SPLITS, analyze_video, dump_json, environment_versions, git_sha,
-    load_model, load_split, video_metrics, write_csv,
+from scripts.laptop_common import (  # noqa: E402
+    MODEL_DIR, RUN_DIR, SPLIT_DIR, SPLITS, analyze_video, dump_json, environment_versions, git_sha,
+    load_model, load_split, video_metrics, write_csv, source_provenance, split_manifest, sha256_file,
 )
 
 PREDICTION_FIELDS = ["video", "split", "actual", "predicted", "score", "true_timecode_sec",
@@ -62,12 +62,20 @@ def timing(rows: list[dict]) -> dict:
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--model-dir", type=Path, default=MODEL_DIR)
-    parser.add_argument("--device", default="cuda")
+    parser.add_argument("--device", default="cuda", choices=("cuda", "cpu"))
     parser.add_argument("--batch-size", type=int, default=16)
     parser.add_argument("--splits", nargs="+", default=list(SPLITS), choices=SPLITS)
     parser.add_argument("--out-dir", type=Path, default=RUN_DIR)
-    parser.add_argument("--metrics-json", type=Path, default=PROJECT_ROOT / "reports" / "laptop_baseline_metrics.json")
+    parser.add_argument("--metrics-json", type=Path, help="Default: --out-dir/metrics.json (private)")
+    parser.add_argument("--split-dir", type=Path, default=SPLIT_DIR)
     args = parser.parse_args()
+    manifests = split_manifest(args.split_dir)
+    if len(args.splits) != len(set(args.splits)):
+        parser.error("--splits must not repeat a split")
+    metrics_path = args.metrics_json or args.out_dir / "metrics.json"
+    for path in (metrics_path, args.out_dir / "predictions.csv", args.out_dir / "predictions_cold_pass.csv"):
+        if path.exists():
+            parser.error(f"Refusing to overwrite {path}; choose a new --out-dir")
 
     import psutil
     import torch
@@ -77,12 +85,16 @@ def main() -> None:
     process = psutil.Process()
     videos, split_of = [], {}
     for split in args.splits:
-        for video in load_split(split):
+        for video in load_split(split, args.split_dir):
+            if sha256_file(video["path"]) != video["sha256"]:
+                raise ValueError(f"Video changed since preparation: {video['video']}")
             videos.append(video)
             split_of[video["video"]] = split
 
     load_start = time.perf_counter()
     extractor, head, config = load_model(args.model_dir, args.device, args.batch_size)
+    if config.get("split_sha256") is not None and config["split_sha256"] != manifests:
+        raise ValueError("Split CSVs differ from the training manifest")
     load_seconds = time.perf_counter() - load_start
     threshold = config["threshold"]
     cold = run_pass(extractor, head, threshold, videos, split_of)
@@ -103,7 +115,9 @@ def main() -> None:
         summary = {
             "videos": len(rows), "processing_errors": len(rows) - len(ok),
             "positive": sum(r["actual"] for r in rows), "negative": sum(1 - r["actual"] for r in rows),
-            "model": video_metrics(ok), "constant_baselines": constant_baselines(rows),
+            "model": video_metrics(ok), "constant_baselines": constant_baselines(ok),
+            "coverage": len(ok) / len(rows), "cold_processing_errors": sum(bool(r["error"]) for r in cold_rows),
+            "complete": all(not r["error"] for r in rows + cold_rows),
             "analysis_time_warm": timing(rows), "analysis_time_cold_pass": timing(cold_rows),
         }
         positives = [r for r in ok if r["actual"] == 1]
@@ -116,6 +130,9 @@ def main() -> None:
 
     metrics = {
         "model": args.model_dir.name, "code_commit": git_sha(), "threshold": threshold,
+        "provenance": source_provenance(), "training_provenance": config.get("provenance"),
+        "split_sha256": manifests,
+        "model_sha256": {p.name: sha256_file(p) for p in args.model_dir.iterdir() if p.is_file()},
         "hardware": {
             "gpu": torch.cuda.get_device_name(0) if args.device == "cuda" else None,
             "vram_gib": round(torch.cuda.get_device_properties(0).total_memory / 2**30, 2) if args.device == "cuda" else None,
@@ -131,8 +148,10 @@ def main() -> None:
         "weights_bytes": {p.name: p.stat().st_size for p in sorted(args.model_dir.glob("*")) if p.is_file()},
         "splits": {split: split_summary(split) for split in args.splits},
     }
-    dump_json(args.metrics_json, metrics)
-    print(f"wrote {args.metrics_json} and {args.out_dir / 'predictions.csv'}")
+    dump_json(metrics_path, metrics)
+    print(f"wrote {metrics_path} and {args.out_dir / 'predictions.csv'}")
+    if any(r["error"] for r in cold + warm):
+        raise SystemExit(1)
 
 
 if __name__ == "__main__":

@@ -1,6 +1,27 @@
-# This is a demo catalog, NOT a statement of banking law.
-# Replace/add entries only after verifying the actual source and clause.
+# Verified against the supplied PDF (not a live consolidated-version certification).
+# Sources, quotations, conditions and limits: docs/RULES_VERIFIED.md.
+# These entries do NOT make the dummy/binary baseline recognize these actions.
 demo_violation:
   document: "Демонстрационный регламент (не нормативный акт)"
   clause: "DEMO-1"
   summary: "Фиктивное событие для проверки API и отображения кадров; не банковское нарушение."
+
+previous_cash_not_stored:
+  document: "Правила, утверждённые постановлением Правления НБРК от 29.11.2019 № 231"
+  clause: "п. 20, абзац 2"
+  summary: "Ранее принятые наличные деньги должны храниться в предназначенных для них устройствах, закрывающихся на ключ. Нужно установить, что деньги относятся к завершённому приёму, а не к текущему клиенту."
+
+cash_count_without_client:
+  document: "Правила, утверждённые постановлением Правления НБРК от 29.11.2019 № 231"
+  clause: "п. 20, абзац 1"
+  summary: "Приём и пересчёт наличных денег клиента производится в его присутствии. Применяется к приёму от клиента, а не к любому внутреннему пересчёту."
+
+cashier_left_during_service:
+  document: "Правила, утверждённые постановлением Правления НБРК от 29.11.2019 № 231"
+  clause: "п. 22"
+  summary: "Кассовому работнику не допускается покидать рабочее место до окончания обслуживания клиента. Требуется установить, что обслуживание ещё продолжается."
+
+personal_items_in_cash_area:
+  document: "Правила, утверждённые постановлением Правления НБРК от 29.11.2019 № 231"
+  clause: "п. 12"
+  summary: "Личные вещи, деньги и ценности работников хранятся вне кассового узла; допускается внос лекарств, медицинских изделий и средств связи без фото- и видеофиксации. Принадлежность и назначение предмета требуют проверки."

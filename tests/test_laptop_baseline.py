@@ -8,7 +8,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 
 try:
     import numpy as np
-    import laptop_common as lc
+    from scripts import laptop_common as lc
 except ModuleNotFoundError as exc:  # service-only environment without ML extras
     np = None
     lc = None

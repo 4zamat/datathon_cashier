@@ -25,8 +25,11 @@ class RuleCatalog:
             if detection.type not in self._rules:
                 raise ValueError(f"Unknown violation type in rules catalog: {detection.type}")
             definition = self._rules[detection.type]
+            payload = detection.model_dump()
+            if detection.type != "demo_violation":
+                payload["description"] += f" Нормативное основание: {definition.document}, {definition.clause}."
             violations.append(Violation(
-                **detection.model_dump(),
+                **payload,
                 rule=RuleReference(document=definition.document, clause=definition.clause),
             ))
         return violations

@@ -5,6 +5,7 @@ Test videos are never touched here. Validation picks weight decay, epoch count a
 
 import argparse
 import json
+import shutil
 import sys
 import time
 from pathlib import Path
@@ -12,18 +13,17 @@ from pathlib import Path
 import numpy as np
 
 if __package__ in {None, ""}:
-    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from laptop_common import (  # noqa: E402
-    MODEL_DIR, RUN_DIR, SAMPLE_FPS, SEED, FeatureExtractor, LinearHead, aggregate, build_encoder,
+from scripts.laptop_common import (  # noqa: E402
+    MODEL_DIR, RUN_DIR, SPLIT_DIR, SAMPLE_FPS, SEED, FeatureExtractor, LinearHead, aggregate, build_encoder,
     cached_features, choose_threshold, dump_json, environment_versions, git_sha, load_split,
-    save_model, video_metrics,
+    save_model, source_provenance, split_manifest, sha256_file,
 )
 
 POSITIVE_WINDOW_SEC = 1.0
 WEIGHT_DECAYS = (0.0, 1e-3, 1e-2, 1e-1)
 LEARNING_RATE = 1e-3
-MINIBATCH = 64
 
 
 def frame_dataset(videos: list[dict], store: dict) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
@@ -55,24 +55,22 @@ def fit_head(x, y, w, x_val, y_val, w_val, weight_decay: float, epochs: int, pat
     mean = x.mean(axis=0)
     std = x.std(axis=0) + 1e-6
     xt = torch.from_numpy((x - mean) / std)
-    yt, wt = torch.from_numpy(y), torch.from_numpy(w * len(w))
+    yt, wt = torch.from_numpy(y), torch.from_numpy(w)
     xv = torch.from_numpy((x_val - mean) / std)
     yv, wv = torch.from_numpy(y_val), torch.from_numpy(w_val)
     layer = torch.nn.Linear(x.shape[1], 1)
     optimizer = torch.optim.Adam(layer.parameters(), lr=LEARNING_RATE, weight_decay=weight_decay)
     loss_fn = torch.nn.BCEWithLogitsLoss(reduction="none")
-    generator = torch.Generator().manual_seed(seed)
     best = (float("inf"), 0, None)
     history = []
     for epoch in range(1, epochs + 1):
         layer.train()
-        order = torch.randperm(len(xt), generator=generator)
-        for start in range(0, len(order), MINIBATCH):
-            index = order[start:start + MINIBATCH]
-            loss = (loss_fn(layer(xt[index]).squeeze(1), yt[index]) * wt[index]).sum() / wt[index].sum()
-            optimizer.zero_grad()
-            loss.backward()
-            optimizer.step()
+        # This small linear head fits in RAM. Full-batch weighting gives every video
+        # its declared contribution; random per-minibatch denominators did not.
+        loss = (loss_fn(layer(xt).squeeze(1), yt) * wt).sum() / wt.sum()
+        optimizer.zero_grad()
+        loss.backward()
+        optimizer.step()
         layer.eval()
         with torch.no_grad():
             val_loss = float((loss_fn(layer(xv).squeeze(1), yv) * wv).sum() / wv.sum())
@@ -90,14 +88,33 @@ def fit_head(x, y, w, x_val, y_val, w_val, weight_decay: float, epochs: int, pat
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--device", default="cuda")
+    parser.add_argument("--device", default="cuda", choices=("cuda", "cpu"))
     parser.add_argument("--batch-size", type=int, default=16)
     parser.add_argument("--epochs", type=int, default=20)
     parser.add_argument("--patience", type=int, default=5)
     parser.add_argument("--seed", type=int, default=SEED)
+    parser.add_argument("--split-dir", type=Path, default=SPLIT_DIR)
+    parser.add_argument("--out-dir", type=Path, default=RUN_DIR)
+    parser.add_argument("--model-dir", type=Path, default=MODEL_DIR)
+    parser.add_argument("--encoder-weights", type=Path, help="Local frozen ResNet18 trunk for offline training")
     parser.add_argument("--smoke", action="store_true",
-                        help="short trial: 3 train + 2 val videos, 2 epochs, output under data/runs/.../smoke")
+                        help="short trial: 4 train + 2 val videos, 2 epochs, output under --out-dir/smoke")
     args = parser.parse_args()
+    if min(args.batch_size, args.epochs, args.patience) < 1:
+        parser.error("batch-size, epochs and patience must be positive")
+    manifests = split_manifest(args.split_dir)
+    train, val = load_split("train", args.split_dir), load_split("val", args.split_dir)
+    out_run, out_model, epochs = args.out_dir, args.model_dir, args.epochs
+    if args.smoke:
+        train = [v for v in train if v["has_violation"]][:2] + [v for v in train if not v["has_violation"]][:2]
+        val = [v for v in val if v["has_violation"]][:1] + [v for v in val if not v["has_violation"]][:1]
+        out_run, out_model, epochs = args.out_dir / "smoke", args.out_dir / "smoke" / "model", 2
+    for directory in (out_run, out_model):
+        if directory.exists() and any(directory.iterdir()):
+            parser.error(f"Refusing to overwrite {directory}; choose new output directories")
+    for video in train + val:
+        if sha256_file(video["path"]) != video["sha256"]:
+            raise ValueError(f"Video changed since preparation: {video['video']}")
 
     import torch
 
@@ -106,17 +123,14 @@ def main() -> None:
     np.random.seed(args.seed)
     torch.manual_seed(args.seed)
 
-    train, val = load_split("train"), load_split("val")
-    out_run, out_model, epochs = RUN_DIR, MODEL_DIR, args.epochs
-    if args.smoke:
-        train = [v for v in train if v["has_violation"]][:2] + [v for v in train if not v["has_violation"]][:2]
-        val = [v for v in val if v["has_violation"]][:1] + [v for v in val if not v["has_violation"]][:1]
-        out_run, out_model, epochs = RUN_DIR / "smoke", RUN_DIR / "smoke" / "model", 2
     out_run.mkdir(parents=True, exist_ok=True)
+    shutil.copytree(args.split_dir, out_run / "splits")
 
     started = time.perf_counter()
-    encoder = build_encoder()  # one-time torchvision weight download if not yet cached
+    encoder = build_encoder(args.encoder_weights)  # otherwise one-time torchvision weight download
     extractor = FeatureExtractor(encoder, args.device, args.batch_size)
+    if args.encoder_weights:
+        extractor.cache_identity += "-" + sha256_file(args.encoder_weights)
     store, feature_seconds = {}, {}
     for video in train + val:
         times, features, seconds = cached_features(extractor, video["path"], video["sha256"])
@@ -146,7 +160,9 @@ def main() -> None:
     train_seconds = time.perf_counter() - train_start
 
     config = {
-        "name": "laptop_baseline", "seed": args.seed, "code_commit": git_sha(),
+        "name": "laptop_baseline_v2", "seed": args.seed, "code_commit": git_sha(),
+        "provenance": source_provenance(), "split_sha256": manifests,
+        "training_encoder_sha256": sha256_file(args.encoder_weights) if args.encoder_weights else None,
         "encoder": {"arch": "resnet18", "weights": "torchvision ResNet18_Weights.IMAGENET1K_V1",
                     "frozen": True, "feature_dim": 512, "file": "encoder_resnet18.pt"},
         "preprocessing": {"sample_fps": SAMPLE_FPS, "color": "BGR->RGB", "transform": "ResNet18_Weights.IMAGENET1K_V1.transforms()",
@@ -155,7 +171,7 @@ def main() -> None:
         "head": {"file": "head.npz", "type": "standardize + linear logit + sigmoid",
                  "selected_weight_decay": chosen["weight_decay"], "learning_rate": LEARNING_RATE,
                  "best_epoch": chosen["best_epoch"], "max_epochs": epochs, "patience": args.patience,
-                 "minibatch": MINIBATCH, "weight_decay_grid": list(WEIGHT_DECAYS)},
+                 "optimization": "full_batch_weighted_bce", "weight_decay_grid": list(WEIGHT_DECAYS)},
         "labels": {"positive_window_sec": POSITIVE_WINDOW_SEC, "class_mapping": {"0": "no_violation_event", "1": "violation_event"},
                    "note": "Binary presence of an event only; no violation types or normative clauses."},
         "aggregation": "video score = max frame probability; predicted timecode = time of that frame",

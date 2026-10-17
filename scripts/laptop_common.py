@@ -5,6 +5,7 @@ import hashlib
 import json
 import math
 import random
+import subprocess
 import time
 from collections.abc import Iterator
 from pathlib import Path
@@ -20,6 +21,7 @@ MODEL_DIR = PROJECT_ROOT / "models" / "laptop_baseline"
 
 SEED = 42
 SAMPLE_FPS = 2.0
+CACHE_VERSION = "resnet18-imagenet1k-v1-resize256-crop224-f32-v2"
 SPLITS = ("train", "val", "test")
 SPLIT_FIELDS = ["video", "has_violation", "timecode_sec", "group_id", "sha256", "duplicates"]
 
@@ -45,9 +47,9 @@ def write_csv(path: Path, fields: list[str], rows: list[dict]) -> None:
         writer.writerows(rows)
 
 
-def load_split(split: str) -> list[dict]:
+def load_split(split: str, split_dir: Path = SPLIT_DIR) -> list[dict]:
     rows = []
-    for row in read_csv(SPLIT_DIR / f"{split}.csv"):
+    for row in read_csv(split_dir / f"{split}.csv"):
         rows.append({
             **row,
             "has_violation": int(row["has_violation"]),
@@ -60,7 +62,9 @@ def load_split(split: str) -> list[dict]:
 def stratified_group_split(
     groups: list[dict], seed: int = SEED, fractions: tuple[float, float] = (0.2, 0.2)
 ) -> dict[str, list[dict]]:
-    """Split whole groups (label is group-constant) into train/val/test, stratified by label."""
+    """Keep scene groups together, including scenes with both positive and negative clips."""
+    if len({g["group_id"] for g in groups}) != len(groups):
+        return split_related_scenes(groups, seed, fractions)
     result: dict[str, list[dict]] = {name: [] for name in SPLITS}
     rng = random.Random(seed)
     for label in (0, 1):
@@ -75,6 +79,56 @@ def stratified_group_split(
     return result
 
 
+def split_related_scenes(groups: list[dict], seed: int, fractions: tuple[float, float]) -> dict[str, list[dict]]:
+    """Deterministic bounded search for balanced splits of indivisible scene groups."""
+    by_scene: dict[str, list[dict]] = {}
+    for row in groups:
+        by_scene.setdefault(row["group_id"], []).append(row)
+    bundles = [by_scene[key] for key in sorted(by_scene)]
+    totals = np.array([sum(g["has_violation"] == label for g in groups) for label in (0, 1)])
+    proportions = np.array([1 - sum(fractions), *fractions])
+    targets = proportions[:, None] * totals[None, :]
+    if len(bundles) < 3 or (totals < 3).any():
+        raise ValueError("Need at least three independent scenes and three videos per class")
+    rng, best = random.Random(seed), None
+    for _ in range(1000):
+        rng.shuffle(bundles)
+        counts = np.zeros((3, 2))
+        parts: list[list[dict]] = [[], [], []]
+        for bundle in bundles:
+            size = np.array([sum(g["has_violation"] == label for g in bundle) for label in (0, 1)])
+            costs = []
+            for i in range(3):
+                trial = counts.copy()
+                trial[i] += size
+                costs.append(float(np.sum((trial - targets) ** 2 / np.maximum(targets, 1))))
+            selected = min(range(3), key=costs.__getitem__)
+            counts[selected] += size
+            parts[selected].extend(bundle)
+        cost = float(np.sum((counts - targets) ** 2 / np.maximum(targets, 1)))
+        if (counts > 0).all() and (best is None or cost < best[0]):
+            best = (cost, parts)
+    if best is None:
+        raise ValueError("Cannot find three scene-disjoint splits with both classes; revise grouping or gather data")
+    return dict(zip(SPLITS, best[1]))
+
+
+def split_manifest(split_dir: Path) -> dict[str, str]:
+    """Reject overlap; record exact CSV versions without training on test labels."""
+    seen_groups: dict[str, str] = {}
+    seen_hashes: dict[str, str] = {}
+    for split in SPLITS:
+        rows = read_csv(split_dir / f"{split}.csv")
+        if {row["has_violation"] for row in rows} != {"0", "1"}:
+            raise ValueError(f"{split} must contain both classes")
+        for row in rows:
+            for key, seen in ((row["group_id"], seen_groups), (row["sha256"], seen_hashes)):
+                if key in seen and seen[key] != split:
+                    raise ValueError(f"Group/content overlaps {seen[key]} and {split}")
+                seen[key] = split
+    return {f"{split}.csv": sha256_file(split_dir / f"{split}.csv") for split in SPLITS}
+
+
 # ---------------------------------------------------------------- video frames
 
 def sample_frames(video_path: Path, sample_fps: float = SAMPLE_FPS) -> Iterator[tuple[float, np.ndarray]]:
@@ -84,6 +138,9 @@ def sample_frames(video_path: Path, sample_fps: float = SAMPLE_FPS) -> Iterator[
     Frames are BGR uint8 as returned by OpenCV.
     """
     import cv2
+
+    if not math.isfinite(sample_fps) or sample_fps <= 0:
+        raise ValueError("sample_fps must be positive and finite")
 
     capture = cv2.VideoCapture(str(video_path))
     try:
@@ -146,13 +203,17 @@ def build_transform():
 class FeatureExtractor:
     """Decode a video at ~2 fps and compute frozen-encoder features in batches."""
 
-    def __init__(self, encoder, device: str, batch_size: int = 16):
+    def __init__(self, encoder, device: str, batch_size: int = 16, sample_fps: float = SAMPLE_FPS):
         import torch
 
         self.torch = torch
         self.encoder = encoder.to(device)
         self.device = device
         self.batch_size = batch_size
+        if batch_size < 1 or not math.isfinite(sample_fps) or sample_fps <= 0:
+            raise ValueError("batch_size and sample_fps must be positive")
+        self.sample_fps = sample_fps
+        self.cache_identity = f"{CACHE_VERSION}-{sample_fps:g}fps"
         self.transform = build_transform()
 
     def _flush(self, batch: list[np.ndarray]) -> np.ndarray:
@@ -167,7 +228,7 @@ class FeatureExtractor:
         times: list[float] = []
         chunks: list[np.ndarray] = []
         batch: list[np.ndarray] = []
-        for timestamp, frame in sample_frames(video_path):
+        for timestamp, frame in sample_frames(video_path, self.sample_fps):
             times.append(timestamp)
             batch.append(frame)
             if len(batch) == self.batch_size:
@@ -183,14 +244,15 @@ class FeatureExtractor:
 def cached_features(extractor: FeatureExtractor, video_path: Path, sha: str) -> tuple[np.ndarray, np.ndarray, float]:
     """Return (times, features, seconds spent extracting; 0.0 on cache hit)."""
     FEATURE_DIR.mkdir(parents=True, exist_ok=True)
-    cache = FEATURE_DIR / f"{sha}_resnet18_{SAMPLE_FPS:g}fps.npz"
+    cache = FEATURE_DIR / f"{sha}_{extractor.cache_identity}.npz"
     if cache.is_file():
         with np.load(cache) as stored:
             return stored["times"], stored["features"].astype(np.float32), 0.0
     start = time.perf_counter()
     times, features = extractor.extract(video_path)
     elapsed = time.perf_counter() - start
-    np.savez(cache, times=times, features=features.astype(np.float16))
+    features = features.astype(np.float32)
+    np.savez(cache, times=times, features=features)
     return times, features, elapsed
 
 
@@ -264,13 +326,25 @@ def dump_json(path: Path, payload: dict) -> None:
 # ------------------------------------------------------------------ model I/O
 
 def git_sha() -> str:
-    import subprocess
-
     try:
         return subprocess.run(["git", "rev-parse", "HEAD"], cwd=PROJECT_ROOT, capture_output=True,
                               text=True, check=True).stdout.strip()
     except (OSError, subprocess.CalledProcessError):
         return "unknown"
+
+
+def source_provenance() -> dict:
+    """Hash actual relevant sources, including edits not yet committed. Never read .env or data."""
+    sources = sorted({p for pattern in ("scripts/*.py", "pipeline/*.py", "app/*.py", "rules/*.yaml",
+                                       "requirements*.txt") for p in PROJECT_ROOT.glob(pattern)})
+    try:
+        status = subprocess.run(["git", "status", "--porcelain"], cwd=PROJECT_ROOT,
+                                capture_output=True, text=True, check=False)
+        dirty = bool(status.stdout) if status.returncode == 0 else None
+    except OSError:
+        dirty = None
+    return {"head_commit": git_sha(), "dirty": dirty,
+            "source_sha256": {p.relative_to(PROJECT_ROOT).as_posix(): sha256_file(p) for p in sources}}
 
 
 def environment_versions() -> dict:
@@ -299,10 +373,28 @@ def save_model(model_dir: Path, encoder, head: LinearHead, config: dict) -> None
 def load_model(model_dir: Path, device: str, batch_size: int = 16):
     """Load encoder + head from local files only (no downloads). Returns (extractor, head, config)."""
     config = json.loads((model_dir / "config.json").read_text(encoding="utf-8"))
+    validate_model_config(config)
     encoder = build_encoder(model_dir / "encoder_resnet18.pt")
     with np.load(model_dir / "head.npz") as stored:
         head = LinearHead.from_state({k: stored[k] for k in stored.files})
-    return FeatureExtractor(encoder, device, batch_size), head, config
+    return FeatureExtractor(encoder, device, batch_size, config["preprocessing"]["sample_fps"]), head, config
+
+
+def validate_model_config(config: dict) -> None:
+    expected = {"color": "BGR->RGB", "resize": 256, "center_crop": 224,
+                "transform": "ResNet18_Weights.IMAGENET1K_V1.transforms()", "normalize": "ImageNet mean/std"}
+    prep = config.get("preprocessing", {})
+    if any(prep.get(key) != value for key, value in expected.items()):
+        raise ValueError("Unsupported preprocessing: refusing to silently change the trained transform")
+    fps = prep.get("sample_fps", 0)
+    threshold = config.get("threshold", float("nan"))
+    if not math.isfinite(fps) or fps <= 0 or not math.isfinite(threshold) or not 0 <= threshold <= 1:
+        raise ValueError("Invalid sample_fps or threshold")
+    encoder = config.get("encoder", {})
+    if (encoder.get("arch"), encoder.get("feature_dim"), encoder.get("file")) != ("resnet18", 512, "encoder_resnet18.pt"):
+        raise ValueError("Unsupported encoder")
+    if config.get("head", {}).get("file") != "head.npz":
+        raise ValueError("Unsupported head file")
 
 
 def analyze_video(extractor: FeatureExtractor, head: LinearHead, threshold: float, video_path: Path) -> dict:
