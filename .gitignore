@@ -1,0 +1,17 @@
+data/
+*.mov
+*.mp4
+*.MOV
+*.MP4
+models/
+.env
+.env.*
+!.env.example
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+*.egg-info/

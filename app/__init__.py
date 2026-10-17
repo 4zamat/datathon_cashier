@@ -1,0 +1,1 @@
+"""Cashier video analysis service."""

@@ -1,0 +1,6 @@
+# This is a demo catalog, NOT a statement of banking law.
+# Replace/add entries only after verifying the actual source and clause.
+demo_violation:
+  document: "Демонстрационный регламент (не нормативный акт)"
+  clause: "DEMO-1"
+  summary: "Фиктивное событие для проверки API и отображения кадров; не банковское нарушение."

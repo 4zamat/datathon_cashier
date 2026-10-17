@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Проверка видео кассира</title>
+  <style>
+    :root { color-scheme: light; font-family: system-ui, sans-serif; color: #172b3a; background: #f2f5f8; }
+    * { box-sizing: border-box; }
+    body { margin: 0; }
+    main { max-width: 980px; margin: 48px auto; padding: 0 20px; }
+    h1 { margin: 8px 0; font-size: clamp(1.8rem, 4vw, 2.5rem); }
+    h2 { font-size: 1.25rem; }
+    .eyebrow { color: #526373; font-size: .8rem; letter-spacing: .1em; }
+    .muted { color: #526373; }
+    .notice { background: #fff5d8; padding: 14px 18px; border-left: 4px solid #bd8610; border-radius: 6px; }
+    .panel, .violation { background: white; border: 1px solid #dae2e9; border-radius: 12px; padding: 24px; margin: 20px 0; }
+    label { display: block; font-weight: 600; margin: 16px 0 8px; }
+    input { width: 100%; font: inherit; padding: 12px; border: 1px solid #a7b6c3; border-radius: 6px; }
+    input:focus, button:focus-visible { outline: 3px solid #79c5ef; outline-offset: 2px; }
+    button { margin-top: 20px; background: #075a82; color: white; border: 0; border-radius: 6px; padding: 13px 22px; font: inherit; cursor: pointer; }
+    button:disabled { opacity: .6; cursor: wait; }
+    #status { white-space: pre-wrap; overflow-wrap: anywhere; }
+    #status[data-kind="error"] { color: #a02424; }
+    #status[data-kind="success"] { color: #186138; }
+    .frames { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(240px, 100%), 1fr)); gap: 14px; }
+    figure { margin: 8px 0; }
+    img { width: 100%; border-radius: 6px; display: block; background: #e9eef2; }
+    figcaption { color: #526373; margin-top: 6px; font-size: .9rem; }
+    .rule { padding: 12px; background: #f2f5f8; border-radius: 6px; overflow-wrap: anywhere; }
+    .time { color: #075a82; font-variant-numeric: tabular-nums; }
+    footer { margin: 32px 0; color: #526373; font-size: .85rem; }
+  </style>
+  <script src="/static/app.js" defer></script>
+</head>
+<body>
+<main>
+  <header>
+    <div class="eyebrow">CASHIER VIOLATION DETECTOR</div>
+    <h1>Проверка видео кассира</h1>
+    <p class="muted">Загрузите запись и просмотрите события, таймкоды и кадры.</p>
+  </header>
+  <p class="notice"><strong>Демонстрационный режим.</strong> DummyPipeline всегда возвращает одно фиктивное нарушение с реальным кадром. Эта версия не распознаёт нарушения.</p>
+  <form id="upload-form" class="panel">
+    <label for="api-key">API-ключ</label>
+    <input id="api-key" type="password" required autocomplete="off" placeholder="Значение API_KEY сервиса">
+    <label for="video">Видеозапись .mov</label>
+    <input id="video" type="file" accept=".mov,video/quicktime" required>
+    <p class="muted">Один файл за проверку. Стандартный лимит — 64 МиБ.</p>
+    <button id="submit" type="submit">Проверить видео</button>
+  </form>
+  <section class="panel" aria-live="polite" aria-atomic="true">
+    <h2>Статус проверки</h2>
+    <p id="status">Выберите запись для анализа.</p>
+    <button id="retry" type="button" hidden>Продолжить проверку статуса</button>
+  </section>
+  <section id="result" hidden aria-label="Результат анализа">
+    <h2 id="verdict"></h2>
+    <div id="violations"></div>
+  </section>
+  <footer>Видео удаляется после обработки. Кадры и результат сохраняются на сервере. Ключ используется только в заголовке запроса и не сохраняется браузером.</footer>
+</main>
+</body>
+</html>

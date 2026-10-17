@@ -1,0 +1,14 @@
+.git
+.env
+.env.*
+.venv
+__pycache__
+**/__pycache__
+data
+models
+*.mov
+*.mp4
+*.MOV
+*.MP4
+tests
+*.egg-info
