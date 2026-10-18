@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Cashier — разметка видео</title>
+  <link rel="icon" type="image/svg+xml" href="/assets/icon.svg">
+  <link rel="stylesheet" href="/assets/style.css">
+  <script src="/assets/app.js" defer></script>
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="/" aria-label="Главная"><span class="brand-icon">C</span><span>Cashier <small>Рабочее место разметки</small></span></a>
+    <span class="local-badge"><span></span> Локально на компьютере</span>
+    <div class="header-actions"><span id="save-status" role="status">Загрузка…</span><button id="save" class="secondary">Сохранить</button><button id="export" class="primary">Скачать разметку ZIP</button></div>
+  </header>
+  <div id="notice" role="alert" hidden></div>
+  <main class="workspace">
+    <aside class="sidebar">
+      <div class="sidebar-head"><h2>Видеозаписи <span id="video-count"></span></h2><p id="progress-text">Читаем папку data/videos…</p><progress id="progress" value="0" max="1"></progress></div>
+      <label class="search-label"><span class="sr-only">Найти видео</span><input id="search" type="search" placeholder="Найти по имени…"></label>
+      <label class="sr-only" for="video-filter">Фильтр видео</label><select id="video-filter"><option value="all">Все записи</option><option value="priority">Пять видео для проверки</option><option value="new">Не начаты</option><option value="draft">В работе</option><option value="reviewed">Просмотрены целиком</option></select>
+      <nav id="video-list" aria-label="Список видео"></nav>
+      <div class="sidebar-foot">Метки модели скрыты, чтобы не влиять на твою оценку.<br><button id="download-draft" class="text-button">Скачать текущий черновик JSON</button></div>
+    </aside>
+    <section class="main-area">
+      <div class="video-heading"><div><div class="eyebrow">РУЧНАЯ ПРОВЕРКА</div><h1 id="video-title">Выберите запись</h1><p id="video-meta">Видео остаются на этом компьютере</p></div><div class="navigation"><button id="previous" class="secondary" aria-label="Предыдущее видео">←</button><button id="next" class="secondary" aria-label="Следующее видео">→</button></div></div>
+      <div class="editor-grid">
+        <section class="viewer-card">
+          <div class="viewer-tabs" role="tablist"><button id="video-tab" role="tab" aria-selected="true">Видео</button><button id="frame-tab" role="tab" aria-selected="false">Рамки на кадре <span id="frame-count">0</span></button></div>
+          <div id="video-panel"><div class="video-stage"><video id="player" controls preload="metadata" playsinline muted></video></div>
+            <div class="time-controls"><button id="back" class="secondary" title="На 0,5 секунды назад">−0,5 с</button><span id="clock">00:00.000 / 00:00.000</span><button id="forward" class="secondary" title="На 0,5 секунды вперёд">+0,5 с</button><label>Скорость <select id="speed"><option value="0.25">0,25×</option><option value="0.5">0,5×</option><option value="1" selected>1×</option><option value="1.5">1,5×</option></select></label></div>
+            <div class="viewer-actions"><button id="mark-start" class="primary">[ Начало события</button><button id="mark-end" class="secondary">] Конец события</button><button id="capture" class="secondary">Зафиксировать кадр</button></div>
+            <p class="hint">Пробел — пауза · [ и ] — границы события · ← и → — шаг 0,5 с</p>
+          </div>
+          <div id="frame-panel" hidden>
+            <div class="frame-toolbar"><label>Новый объект <select id="box-label"><option value="person">Человек</option><option value="cash">Деньги</option><option value="hand">Кисть руки</option><option value="phone">Телефон</option><option value="tray">Лоток</option><option value="storage">Сейф / место хранения</option><option value="laptop">Ноутбук</option><option value="cash_counter">Счётчик банкнот</option><option value="banknote_detector">Детектор банкнот</option><option value="bag">Сумка / пакет</option><option value="other">Другое / уточнить</option></select></label><button id="draw-mode" class="primary">+ Новая рамка</button><button id="select-mode" class="secondary">Выбрать / двигать</button></div>
+            <p id="frame-time" class="hint">Сначала зафиксируйте кадр из видео</p>
+            <div class="frame-stage"><div id="frame-canvas" hidden><img id="frame-image" alt="Зафиксированный кадр для разметки"><svg id="box-overlay" xmlns="http://www.w3.org/2000/svg" aria-label="Нарисуйте рамку мышью"></svg></div><p id="frame-empty">Поставьте видео на паузу и нажмите<br><strong>«Зафиксировать кадр»</strong></p></div>
+            <p id="drawing-help" class="hint" role="status">Выберите новый объект и протяните рамку. Можно добавить несколько рамок подряд, в том числе пересекающихся.</p>
+            <div id="box-list" aria-label="Объекты на кадре"></div>
+            <div id="box-editor" hidden><label>Выбранный объект <select id="selected-label"></select></label><label class="check"><input id="occluded" type="checkbox"> Частично закрыт</label><label>Комментарий к объекту<input id="box-comment" placeholder="Например: часть предмета закрыта рукой"></label><button id="delete-box" class="danger">Удалить рамку</button></div>
+            <label class="review-scope">Что проверено на этом кадре<select id="review-profile"><option value="equipment">Оборудование: сейф, ноутбук, счётчик, детектор</option><option value="all">Все 10 классов объектов</option></select></label>
+            <label class="check frame-review"><input id="frame-reviewed" type="checkbox"> Все видимые объекты указанного набора размечены</label>
+            <p id="frame-provenance" class="hint"></p>
+            <div id="frame-strip"></div>
+            <div class="frame-footer"><button id="delete-frame" class="text-button danger">Убрать этот кадр из разметки</button><span id="boxes-count"></span></div>
+          </div>
+        </section>
+        <section class="event-panel">
+          <div class="section-title"><h2 id="event-form-title">Добавить событие</h2><span class="step-badge">01 / НАБЛЮДЕНИЕ</span></div>
+          <p class="hint">Опишите видимое действие. Если контекста недостаточно, выберите «Неясно».</p>
+          <form id="event-form">
+            <div class="interval"><label>Начало, секунды<input id="event-start" type="number" min="0" step="0.001" placeholder="0.000" required></label><span>—</span><label>Конец, секунды<input id="event-end" type="number" min="0" step="0.001" placeholder="0.000" required></label></div>
+            <label>Что произошло<textarea id="observation" rows="4" placeholder="Кто что сделал, что было до и после. Что не видно?" required maxlength="10000"></textarea></label>
+            <label>Тип события<select id="event-type"></select></label>
+            <label>Твоя оценка<select id="assessment"><option value="uncertain">Неясно / нужна проверка</option><option value="possible_violation">Есть признаки возможного нарушения</option><option value="no_violation">Нарушений не видно</option></select></label>
+            <details id="rule-details"><summary>Условия применения правила</summary><p id="rule-text">Выберите тип события, чтобы посмотреть условия.</p></details>
+            <div class="form-actions"><button id="add-event" class="primary" type="submit">Добавить событие</button><button id="cancel-event" type="button" class="secondary">Очистить</button></div>
+            <p id="draft-status" class="hint" hidden>Черновик формы сохраняется. Нажмите «Добавить событие», чтобы включить его в список событий.</p>
+          </form>
+          <div class="section-title saved-title"><h2>События в записи <span id="event-count">0</span></h2></div><div id="events-list"><p class="empty">Пока нет событий</p></div>
+        </section>
+      </div>
+      <section class="review-card"><div class="section-title"><h2>Заметки по записи</h2><span class="step-badge">02 / ПРОВЕРКА</span></div><p id="layout-info" class="hint"></p><div class="review-grid"><label>Кто размечает<input id="reviewer" placeholder="Имя или ник" maxlength="200"></label><label>Группа одной сцены <span class="optional">если определена</span><input id="scene-group" placeholder="Например, scene_01" maxlength="200"></label><label class="notes-label">Общий комментарий<textarea id="notes" rows="2" placeholder="Неясности, похожие записи, чего не хватает для вывода…" maxlength="20000"></textarea></label></div><label class="check"><input id="watched" type="checkbox"> Я просмотрел(а) запись целиком</label><p class="hint">Полный просмотр сам по себе не означает «нарушений нет». Для нормального фрагмента добавьте отдельное событие. Одинаковым и связанным записям назначайте общую группу сцены.</p></section>
+      <footer>Автосохранение — на этот компьютер. <span id="save-path"></span><br>CSV событий и рамки не меняют исходную разметку и пока не подключены к обучению автоматически.</footer>
+    </section>
+  </main>
+</body>
+</html>

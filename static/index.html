@@ -18,7 +18,7 @@
     label { display: block; font-weight: 600; margin: 16px 0 8px; }
     input { width: 100%; font: inherit; padding: 12px; border: 1px solid #a7b6c3; border-radius: 6px; }
     input:focus, button:focus-visible { outline: 3px solid #79c5ef; outline-offset: 2px; }
-    button { margin-top: 20px; background: #075a82; color: white; border: 0; border-radius: 6px; padding: 13px 22px; font: inherit; cursor: pointer; }
+    button { margin-top: 20px; background: #a00053; color: white; border: 0; border-radius: 6px; padding: 13px 22px; font: inherit; cursor: pointer; }
     button:disabled { opacity: .6; cursor: wait; }
     #status { white-space: pre-wrap; overflow-wrap: anywhere; }
     #status[data-kind="error"] { color: #a02424; }
@@ -29,6 +29,10 @@
     figcaption { color: #526373; margin-top: 6px; font-size: .9rem; }
     .rule { padding: 12px; background: #f2f5f8; border-radius: 6px; overflow-wrap: anywhere; }
     .time { color: #075a82; font-variant-numeric: tabular-nums; }
+    video { display: block; width: 100%; max-height: 520px; background: #18212b; border-radius: 8px; }
+    .seek { margin: 6px 0; padding: 8px 12px; }
+    dialog { max-width: 95vw; max-height: 95vh; border: 0; border-radius: 12px; }
+    dialog img { max-height: 78vh; width: auto; max-width: 85vw; object-fit: contain; }
     footer { margin: 32px 0; color: #526373; font-size: .85rem; }
   </style>
   <script src="/static/app.js" defer></script>
@@ -40,7 +44,7 @@
     <h1>Проверка видео кассира</h1>
     <p class="muted">Загрузите запись и просмотрите события, таймкоды и кадры.</p>
   </header>
-  <p class="notice"><strong>Демонстрационный режим.</strong> DummyPipeline всегда возвращает одно фиктивное нарушение с реальным кадром. Эта версия не распознаёт нарушения.</p>
+  <p id="mode" class="notice" role="status">Подключение к сервису…</p>
   <form id="upload-form" class="panel">
     <label for="api-key">API-ключ</label>
     <input id="api-key" type="password" required autocomplete="off" placeholder="Значение API_KEY сервиса">
@@ -49,6 +53,11 @@
     <p class="muted">Один файл за проверку. Стандартный лимит — 64 МиБ.</p>
     <button id="submit" type="submit">Проверить видео</button>
   </form>
+  <section id="preview" class="panel" hidden>
+    <h2>Запись для проверки</h2>
+    <video id="player" controls preload="metadata" playsinline></video>
+    <p id="player-note" class="muted">Нажмите таймкод события, чтобы перейти к нему в записи.</p>
+  </section>
   <section class="panel" aria-live="polite" aria-atomic="true">
     <h2>Статус проверки</h2>
     <p id="status">Выберите запись для анализа.</p>
@@ -59,6 +68,7 @@
     <div id="violations"></div>
   </section>
   <footer>Видео удаляется после обработки. Кадры и результат сохраняются на сервере. Ключ используется только в заголовке запроса и не сохраняется браузером.</footer>
+  <dialog id="frame-dialog"><img id="full-frame" alt="Кадр доказательства"><form method="dialog"><button>Закрыть</button></form></dialog>
 </main>
 </body>
 </html>

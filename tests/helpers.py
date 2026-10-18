@@ -6,7 +6,7 @@ import cv2
 import numpy as np
 
 from app.models import Detection, EvidenceFrame
-from pipeline.base import Pipeline, Result
+from pipeline.base import ManualReviewRequired, Pipeline, Result
 
 
 def make_video(path: Path) -> bytes:
@@ -52,6 +52,11 @@ class RecordingPipeline(Pipeline):
 class UnknownTypePipeline(Pipeline):
     def analyze(self, video_path: Path) -> Result:
         return Result(violations=[detection(kind="unknown_type")])
+
+
+class ManualReviewPipeline(Pipeline):
+    def analyze(self, video_path: Path) -> Result:
+        raise ManualReviewRequired("Uncertain visual evidence")
 
 
 class EvaluationPipeline(Pipeline):

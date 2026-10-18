@@ -61,6 +61,17 @@ class ServiceTests(unittest.TestCase):
             self.assertEqual(client.get("/").status_code, 200)
             self.assertEqual(client.get("/static/app.js").status_code, 200)
 
+    def test_health_reflects_configured_pipeline_without_claiming_model_quality(self) -> None:
+        with TestClient(create_app(self.settings)) as client:
+            info = client.get("/health").json()
+            self.assertTrue(info["demo"])
+            self.assertFalse(info["model_quality_verified"])
+        settings = self.settings.model_copy(update={"pipeline_class": "pipeline.vlm:LocalVlmPipeline"})
+        with TestClient(create_app(settings)) as client:
+            info = client.get("/health").json()
+            self.assertFalse(info["demo"])
+            self.assertEqual(info["pipeline"], "pipeline.vlm:LocalVlmPipeline")
+
     def test_real_mov_end_to_end_and_restart(self) -> None:
         with TestClient(create_app(self.settings)) as client:
             job_id = submit(client, self.video)
@@ -114,6 +125,15 @@ class ServiceTests(unittest.TestCase):
             self.assertEqual(job["verdict"], "no_violation")
             self.assertEqual(job["violations"], [])
             self.assertEqual(list((self.settings.data_dir / "uploads").iterdir()), [])
+
+    def test_unresolved_visual_evidence_has_explicit_failure_and_cleanup(self) -> None:
+        settings = self.settings.model_copy(update={"pipeline_class": "tests.helpers:ManualReviewPipeline"})
+        with TestClient(create_app(settings)) as client:
+            job = wait_for_job(client, submit(client, self.video))
+            self.assertEqual(job["status"], "failed")
+            self.assertIn("ручная проверка", job["error"])
+            self.assertEqual(job["violations"], [])
+            self.assertEqual(list((settings.data_dir / "uploads").iterdir()), [])
 
     def test_timeout_kills_pipeline_and_queue_remains_usable(self) -> None:
         settings = self.settings.model_copy(update={"pipeline_class": "tests.helpers:ConditionalPipeline", "processing_timeout_sec": 3})

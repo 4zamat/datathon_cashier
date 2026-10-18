@@ -1,6 +1,7 @@
 """One queue thread, at most one killable pipeline process at a time."""
 
 import logging
+import json
 import multiprocessing as mp
 from dataclasses import dataclass
 from pathlib import Path
@@ -12,14 +13,18 @@ from app.config import Settings
 from app.models import Job
 from app.rules import RuleCatalog
 from app.storage import JobStore
-from pipeline.base import Result, load_pipeline
+from pipeline.base import ManualReviewRequired, Result, load_pipeline
 
 logger = logging.getLogger(__name__)
 
 
 def run_pipeline(spec: str, video_path: Path, output_path: Path) -> None:
     """Spawn entrypoint: only JSON crosses the process boundary."""
-    result = Result.model_validate(load_pipeline(spec).analyze(video_path))
+    try:
+        result = Result.model_validate(load_pipeline(spec).analyze(video_path))
+    except ManualReviewRequired:
+        output_path.write_text('{"error_code":"manual_review_required"}', encoding="utf-8")
+        return
     output_path.write_text(result.model_dump_json(), encoding="utf-8")
 
 
@@ -117,7 +122,11 @@ class JobWorker:
                 return self._timeout(pending)
             if process.exitcode != 0:
                 raise RuntimeError(f"Pipeline exited with code {process.exitcode}")
-            result = Result.model_validate_json(output_path.read_text(encoding="utf-8"))
+            payload = json.loads(output_path.read_text(encoding="utf-8"))
+            if payload == {"error_code": "manual_review_required"}:
+                return Job(job_id=pending.job_id, status="failed",
+                    error="Недостаточно визуальных оснований: требуется ручная проверка. Автоматический вердикт не вынесен.")
+            result = Result.model_validate(payload)
             violations = self.rules.enrich(result)
             if monotonic() >= pending.deadline:
                 return self._timeout(pending)

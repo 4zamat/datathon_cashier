@@ -7,6 +7,10 @@ from pydantic import Field
 from app.models import Detection, Model, Verdict
 
 
+class ManualReviewRequired(ValueError):
+    """The video was read, but visible evidence does not support a legal verdict."""
+
+
 class Result(Model):
     violations: list[Detection] = Field(default_factory=list)
 

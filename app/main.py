@@ -110,6 +110,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     application = FastAPI(title="Cashier Violation Detector", version="0.1.0", lifespan=lifespan)
     application.add_middleware(APIAccessMiddleware)
 
+    @application.get("/health")
+    async def health(request: Request) -> dict:
+        config: Settings = request.app.state.settings
+        return {"status": "ok", "demo": config.pipeline_class == "pipeline.dummy:DummyPipeline",
+                "pipeline": config.pipeline_class, "model_quality_verified": False,
+                "processing_timeout_sec": config.processing_timeout_sec}
+
     @application.post("/api/v1/analyze", response_model=AcceptedJob, status_code=202,
                       dependencies=[Depends(api_key_header)])
     async def analyze(request: Request, file: Annotated[UploadFile, File(...)]) -> AcceptedJob:

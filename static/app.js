@@ -7,6 +7,51 @@ const retryButton = document.querySelector("#retry");
 const resultNode = document.querySelector("#result");
 let activeJob = null;
 let activeKey = "";
+let videoUrl = null;
+const player = document.querySelector("#player");
+const videoInput = document.querySelector("#video");
+const titles = {
+  previous_cash_not_stored: "Деньги предыдущего клиента не убраны",
+  cash_count_without_client: "Пересчёт денег в отсутствие клиента",
+  cashier_left_during_service: "Уход во время обслуживания клиента",
+  personal_items_in_cash_area: "Личные вещи в кассовой зоне",
+  demo_violation: "Демонстрационное событие",
+};
+
+fetch("/health", { cache: "no-store" }).then(r => {
+  if (!r.ok) throw new Error("health");
+  return r.json();
+}).then(info => {
+  document.querySelector("#mode").textContent = info.demo
+    ? "Демонстрационный режим: DummyPipeline создаёт фиктивное событие. Распознавание не выполняется."
+    : "Анализ видео подключён. Система отмечает возможные нарушения; офицер проверяет кадры и применимость правила. Качество распознавания пока ограничено.";
+}).catch(() => { document.querySelector("#mode").textContent = "Не удалось проверить подключение к сервису."; });
+
+videoInput.addEventListener("change", () => {
+  resultNode.hidden = true;
+  if (videoUrl) URL.revokeObjectURL(videoUrl);
+  videoUrl = videoInput.files[0] ? URL.createObjectURL(videoInput.files[0]) : null;
+  document.querySelector("#preview").hidden = !videoUrl;
+  document.querySelector("#player-note").textContent = "Нажмите таймкод события, чтобы перейти к нему в записи.";
+  if (videoUrl) player.src = videoUrl;
+  else player.removeAttribute("src");
+});
+player.addEventListener("error", () => {
+  document.querySelector("#player-note").textContent = "Браузер не поддерживает кодек этого MOV. Анализ доступен; просмотрите исходник в VLC, а кадры — в карточках ниже.";
+});
+window.addEventListener("pagehide", () => { if (videoUrl) URL.revokeObjectURL(videoUrl); });
+
+function seekButton(seconds) {
+  const button = element("button", `${timecode(seconds)} · ${seconds.toFixed(2)} сек.`, "seek");
+  button.type = "button";
+  button.addEventListener("click", () => {
+    if (videoUrl && !player.error) {
+      player.currentTime = seconds;
+      player.scrollIntoView({ behavior: "smooth", block: "center" });
+    }
+  });
+  return button;
+}
 
 function showStatus(text, kind = "") {
   statusNode.textContent = text;
@@ -55,8 +100,8 @@ function renderResult(job) {
   list.replaceChildren();
   for (const violation of job.violations) {
     const article = element("article", "", "violation");
-    article.append(element("h3", violation.type));
-    article.append(element("p", `${timecode(violation.timecode_sec)} · ${violation.timecode_sec.toFixed(2)} сек.`, "time"));
+    article.append(element("h3", titles[violation.type] || violation.type));
+    article.append(seekButton(violation.timecode_sec));
     article.append(element("p", violation.description));
     article.append(element("p", `${violation.rule.document} · пункт ${violation.rule.clause}`, "rule"));
     const frames = element("div", "", "frames");
@@ -65,7 +110,15 @@ function renderResult(job) {
       const image = document.createElement("img");
       image.src = `data:image/jpeg;base64,${frame.image_base64}`;
       image.alt = `Кадр на ${timecode(frame.timestamp_sec)}`;
-      figure.append(image, element("figcaption", timecode(frame.timestamp_sec)));
+      const expand = element("button", "", "seek");
+      expand.type = "button";
+      expand.setAttribute("aria-label", `Увеличить кадр на ${timecode(frame.timestamp_sec)}`);
+      expand.append(image);
+      expand.addEventListener("click", () => {
+        document.querySelector("#full-frame").src = image.src;
+        document.querySelector("#frame-dialog").showModal();
+      });
+      figure.append(expand, seekButton(frame.timestamp_sec));
       frames.append(figure);
     }
     article.append(frames);
@@ -76,6 +129,7 @@ function renderResult(job) {
 async function poll() {
   retryButton.hidden = true;
   submitButton.disabled = true;
+  videoInput.disabled = true;
   try {
     while (activeJob) {
       const job = await api(`/api/v1/jobs/${encodeURIComponent(activeJob)}`);
@@ -96,6 +150,7 @@ async function poll() {
     retryButton.hidden = false;
   } finally {
     submitButton.disabled = false;
+    videoInput.disabled = Boolean(activeJob);
     if (!activeJob) activeKey = "";
   }
 }
@@ -112,6 +167,7 @@ form.addEventListener("submit", async event => {
   retryButton.hidden = true;
   resultNode.hidden = true;
   submitButton.disabled = true;
+  videoInput.disabled = true;
   showStatus("Видео загружается…");
   try {
     const data = new FormData();
@@ -123,6 +179,7 @@ form.addEventListener("submit", async event => {
     showStatus(`Ошибка загрузки: ${error.message}`, "error");
     activeKey = "";
     submitButton.disabled = false;
+    videoInput.disabled = false;
   }
 });
 

@@ -15,3 +15,6 @@ __pycache__/
 .coverage
 htmlcov/
 *.egg-info/
+# Local presentations contain frames from the private dataset.
+deliverables/
+api-key.txt

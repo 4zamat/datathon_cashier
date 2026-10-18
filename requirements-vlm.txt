@@ -1,0 +1,5 @@
+# Add to the existing Brev torch environment. No replacement of CUDA torch wheels.
+transformers==4.57.6
+accelerate==1.12.0
+huggingface-hub==0.36.0
+Pillow==12.0.0
